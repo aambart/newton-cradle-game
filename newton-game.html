@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Newton's Cradle Town Adventure</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #87CEEB;
+            font-family: 'Georgia', serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        #gameContainer {
+            border: 3px solid #8B4513;
+            border-radius: 10px;
+            background: #228B22;
+            position: relative;
+        }
+
+        #gameCanvas {
+            display: block;
+            background: linear-gradient(to bottom, #87CEEB 0%, #98FB98 100%);
+        }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #8B4513;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+        }
+
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #8B4513;
+            font-size: 12px;
+            text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="ui">
+            <div>Bounces: <span id="bounceCount">0</span></div>
+            <div>Score: <span id="score">0</span></div>
+            <div>Apples: <span id="appleCount">0</span></div>
+            <div>Lives: <span id="lives">3</span> ❤️</div>
+            <div id="powerStatus" style="color: #FFD700; display: none;">⚡ POWERED UP! ⚡</div>
+            <div id="bossStatus" style="color: #ff0000; display: none; font-weight: bold;">🧠 EINSTEIN BOSS! 🧠</div>
+            <div id="cheatStatus" style="color: #ff00ff; display: none; font-weight: bold;">🎮 CHEAT MODE ON 🎮</div>
+            <div style="margin-top: 10px;">
+                <div style="font-size: 12px;">Charge Field:</div>
+                <div id="chargeBar"
+                    style="width: 100px; height: 10px; border: 2px solid #333; background: #222; position: relative;">
+                    <div id="chargeProgress"
+                        style="height: 100%; background: linear-gradient(90deg, #00ff00, #ffff00, #ff0000); width: 0%; transition: width 0.3s;">
+                    </div>
+                </div>
+                <div id="chargeStatus" style="font-size: 10px; color: #666;">Need 5 apples to unlock</div>
+            </div>
+        </div>
+        <div id="instructions">
+            Use WASD or Arrow Keys to move Isaac Newton around town!<br>
+            Bump into people and objects to create Newton's Cradle effects!<br>
+            Eat 5 apples to unlock Charge Field, then press SPACEBAR to unleash it!<br>
+            After 10 apples, Einstein boss appears! Hit him 3 times with charge field to win!<br>
+            <span style="color: #ff00ff; font-size: 12px;">Press 'T' for cheat mode (unlimited lives & charge
+                field)</span><br>
+            <button id="musicToggle"
+                style="margin-top: 10px; padding: 5px 10px; background: #8B4513; color: white; border: none; border-radius: 5px; cursor: pointer;">🎵
+                Toggle Music</button>
+        </div>
+
+        <div id="gameOverlay"
+            style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; display: none; justify-content: center; align-items: center; flex-direction: column; font-family: Georgia, serif;">
+            <div id="overlayContent" style="text-align: center;">
+                <!-- Content will be filled by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class NewtonGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.width = 800;
+                this.height = 600;
+
+                this.bounceCount = 0;
+                this.score = 0;
+                this.keys = {};
+                this.powerUpTime = 0;
+                this.maxPowerUpTime = 300; // 5 seconds at 60fps
+                this.applesEaten = 0;
+                this.chargeLevel = 0;
+                this.maxChargeLevel = 5; // Need 5 apples to unlock charge
+                this.chargeReady = false;
+                this.chargeCooldown = 0;
+                this.maxChargeCooldown = 180; // 3 seconds cooldown
+
+                // Boss system
+                this.bossSpawned = false;
+                this.boss = null;
+                this.bossSpawnThreshold = 10; // Spawn boss after 10 apples
+                this.playerLives = 3;
+                this.gameWon = false;
+                this.gameState = 'playing'; // 'playing', 'cutscene', 'won'
+                this.cutsceneTimer = 0;
+                this.winApple = null;
+
+                // Audio system
+                this.audioContext = null;
+                this.musicPlaying = false;
+                this.initAudio();
+
+                // Cheat mode
+                this.cheatMode = false;
+
+                // Player (Isaac Newton)
+                this.player = {
+                    x: 100,
+                    y: 300,
+                    vx: 0,
+                    vy: 0,
+                    radius: 20,
+                    color: '#8B4513',
+                    powered: false,
+                    bounceForce: 6,
+                    invulnerable: false,
+                    invulnerabilityTime: 0
+                };
+
+                // NPCs with autonomous movement
+                this.npcs = [
+                    {
+                        x: 300, y: 200, vx: 0, vy: 0, radius: 18, color: '#FF6B6B', type: 'merchant',
+                        aiSpeed: 1, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 120
+                    },
+                    {
+                        x: 500, y: 400, vx: 0, vy: 0, radius: 16, color: '#4ECDC4', type: 'scholar',
+                        aiSpeed: 0.8, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 180
+                    },
+                    {
+                        x: 200, y: 450, vx: 0, vy: 0, radius: 17, color: '#45B7D1', type: 'townsperson',
+                        aiSpeed: 1.2, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 90
+                    },
+                    {
+                        x: 600, y: 250, vx: 0, vy: 0, radius: 19, color: '#96CEB4', type: 'baker',
+                        aiSpeed: 0.6, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 150
+                    },
+                    {
+                        x: 150, y: 350, vx: 0, vy: 0, radius: 15, color: '#FFEAA7', type: 'child',
+                        aiSpeed: 1.5, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 60
+                    },
+                    {
+                        x: 450, y: 300, vx: 0, vy: 0, radius: 18, color: '#DDA0DD', type: 'noble',
+                        aiSpeed: 0.7, aiDirection: Math.random() * Math.PI * 2, aiTimer: 0, aiChangeTime: 200
+                    }
+                ];
+
+                // Objects - much more variety!
+                this.objects = [
+                    // Power-up apples
+                    { x: 150, y: 150, vx: 0, vy: 0, radius: 12, color: '#D63031', type: 'apple' },
+                    { x: 700, y: 450, vx: 0, vy: 0, radius: 12, color: '#D63031', type: 'apple' },
+                    { x: 400, y: 100, vx: 0, vy: 0, radius: 12, color: '#D63031', type: 'apple' },
+
+                    // Books and scrolls
+                    { x: 350, y: 500, vx: 0, vy: 0, radius: 10, color: '#6C5CE7', type: 'book' },
+                    { x: 250, y: 300, vx: 0, vy: 0, radius: 8, color: '#E17055', type: 'scroll' },
+                    { x: 550, y: 350, vx: 0, vy: 0, radius: 9, color: '#00B894', type: 'manuscript' },
+
+                    // Scientific instruments
+                    { x: 650, y: 180, vx: 0, vy: 0, radius: 15, color: '#A29BFE', type: 'telescope' },
+                    { x: 180, y: 400, vx: 0, vy: 0, radius: 12, color: '#FDCB6E', type: 'compass' },
+                    { x: 480, y: 200, vx: 0, vy: 0, radius: 10, color: '#E84393', type: 'prism' },
+                    { x: 320, y: 180, vx: 0, vy: 0, radius: 13, color: '#00CEC9', type: 'astrolabe' },
+
+                    // Containers and furniture
+                    { x: 650, y: 380, vx: 0, vy: 0, radius: 16, color: '#8B4513', type: 'barrel' },
+                    { x: 120, y: 250, vx: 0, vy: 0, radius: 14, color: '#DDA0DD', type: 'chest' },
+                    { x: 580, y: 480, vx: 0, vy: 0, radius: 18, color: '#CD853F', type: 'crate' },
+
+                    // Period items
+                    { x: 450, y: 450, vx: 0, vy: 0, radius: 11, color: '#FFD700', type: 'coin' },
+                    { x: 200, y: 200, vx: 0, vy: 0, radius: 9, color: '#FF7675', type: 'candle' },
+                    { x: 600, y: 300, vx: 0, vy: 0, radius: 13, color: '#74B9FF', type: 'inkwell' },
+                    { x: 380, y: 280, vx: 0, vy: 0, radius: 8, color: '#A0522D', type: 'quill' },
+
+                    // Natural objects
+                    { x: 500, y: 520, vx: 0, vy: 0, radius: 15, color: '#8B4513', type: 'log' },
+                    { x: 300, y: 400, vx: 0, vy: 0, radius: 10, color: '#696969', type: 'stone' },
+                    { x: 680, y: 120, vx: 0, vy: 0, radius: 12, color: '#32CD32', type: 'herb' }
+                ];
+
+                // Buildings for collision avoidance
+                this.buildings = [
+                    { x: 50, y: 50, width: 120, height: 80, color: '#8B4513' },
+                    { x: 250, y: 80, width: 100, height: 70, color: '#CD853F' },
+                    { x: 500, y: 60, width: 140, height: 90, color: '#A0522D' }
+                ];
+
+                this.setupControls();
+                this.setupMusicToggle();
+                this.gameLoop();
+            }
+
+            setupControls() {
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.key.toLowerCase()] = true;
+
+                    // Handle spacebar for charge field
+                    if (e.code === 'Space' || e.key === ' ') {
+                        e.preventDefault();
+
+                        if ((this.chargeReady && this.chargeCooldown <= 0) || this.cheatMode) {
+                            this.activateChargeField();
+                        }
+                    }
+
+                    // Handle cheat mode toggle
+                    if (e.key.toLowerCase() === 't') {
+                        this.toggleCheatMode();
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.key.toLowerCase()] = false;
+                });
+            }
+
+            update() {
+                // Handle input - but allow physics to override
+                const speed = 3;
+                const inputForce = 0.5; // Reduced so bounces are more noticeable
+
+                if (this.keys['w'] || this.keys['arrowup']) this.player.vy -= inputForce;
+                if (this.keys['s'] || this.keys['arrowdown']) this.player.vy += inputForce;
+                if (this.keys['a'] || this.keys['arrowleft']) this.player.vx -= inputForce;
+                if (this.keys['d'] || this.keys['arrowright']) this.player.vx += inputForce;
+
+                // Apply friction to player
+                this.player.vx *= 0.92;
+                this.player.vy *= 0.92;
+
+                // Limit max speed
+                const maxSpeed = 4;
+                const currentSpeed = Math.sqrt(this.player.vx * this.player.vx + this.player.vy * this.player.vy);
+                if (currentSpeed > maxSpeed) {
+                    this.player.vx = (this.player.vx / currentSpeed) * maxSpeed;
+                    this.player.vy = (this.player.vy / currentSpeed) * maxSpeed;
+                }
+
+                // Update positions
+                this.player.x += this.player.vx;
+                this.player.y += this.player.vy;
+
+                // Keep player in bounds
+                this.player.x = Math.max(this.player.radius, Math.min(this.width - this.player.radius, this.player.x));
+                this.player.y = Math.max(this.player.radius, Math.min(this.height - this.player.radius, this.player.y));
+
+                // Update NPCs with AI movement
+                this.npcs.forEach(npc => {
+                    // AI movement logic
+                    npc.aiTimer++;
+                    if (npc.aiTimer >= npc.aiChangeTime) {
+                        // Change direction randomly
+                        npc.aiDirection = Math.random() * Math.PI * 2;
+                        npc.aiTimer = 0;
+                        npc.aiChangeTime = 60 + Math.random() * 120; // Random between 1-3 seconds
+                    }
+
+                    // Apply AI movement (but allow physics to override)
+                    const aiForce = 0.3;
+                    npc.vx += Math.cos(npc.aiDirection) * npc.aiSpeed * aiForce;
+                    npc.vy += Math.sin(npc.aiDirection) * npc.aiSpeed * aiForce;
+
+                    // Update position
+                    npc.x += npc.vx;
+                    npc.y += npc.vy;
+
+                    // Apply friction
+                    npc.vx *= 0.92;
+                    npc.vy *= 0.92;
+
+                    // Keep in bounds and bounce off walls
+                    if (npc.x < npc.radius || npc.x > this.width - npc.radius) {
+                        npc.x = Math.max(npc.radius, Math.min(this.width - npc.radius, npc.x));
+                        npc.vx *= -0.7;
+                        npc.aiDirection = Math.PI - npc.aiDirection; // Reflect direction
+                    }
+                    if (npc.y < npc.radius || npc.y > this.height - npc.radius) {
+                        npc.y = Math.max(npc.radius, Math.min(this.height - npc.radius, npc.y));
+                        npc.vy *= -0.7;
+                        npc.aiDirection = -npc.aiDirection; // Reflect direction
+                    }
+
+                    // Avoid buildings (simple collision avoidance)
+                    if (this.buildings) {
+                        this.buildings.forEach(building => {
+                            if (npc.x > building.x - npc.radius &&
+                                npc.x < building.x + building.width + npc.radius &&
+                                npc.y > building.y - npc.radius &&
+                                npc.y < building.y + building.height + npc.radius) {
+                                // Push away from building
+                                const centerX = building.x + building.width / 2;
+                                const centerY = building.y + building.height / 2;
+                                const dx = npc.x - centerX;
+                                const dy = npc.y - centerY;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                if (distance > 0) {
+                                    npc.vx += (dx / distance) * 2;
+                                    npc.vy += (dy / distance) * 2;
+                                    npc.aiDirection = Math.atan2(dy, dx); // Move away from building
+                                }
+                            }
+                        });
+                    }
+                });
+
+                // Update objects
+                this.objects.forEach(obj => {
+                    obj.x += obj.vx;
+                    obj.y += obj.vy;
+                    obj.vx *= 0.95;
+                    obj.vy *= 0.95;
+
+                    // Keep in bounds
+                    if (obj.x < obj.radius || obj.x > this.width - obj.radius) {
+                        obj.x = Math.max(obj.radius, Math.min(this.width - obj.radius, obj.x));
+                        obj.vx *= -0.5;
+                    }
+                    if (obj.y < obj.radius || obj.y > this.height - obj.radius) {
+                        obj.y = Math.max(obj.radius, Math.min(this.height - obj.radius, obj.y));
+                        obj.vy *= -0.5;
+                    }
+                });
+
+                // Update power-up system
+                this.updatePowerUp();
+
+                // Update boss if spawned
+                if (this.boss) {
+                    this.updateBoss();
+                }
+
+                // Check collisions
+                this.checkCollisions();
+            }
+
+            checkCollisions() {
+                // Player vs NPCs
+                this.npcs.forEach(npc => {
+                    if (this.isColliding(this.player, npc)) {
+                        this.bounce(this.player, npc);
+                        this.bounceCount++;
+                        this.score += 10;
+                        this.updateUI();
+                    }
+                });
+
+                // Player vs Objects
+                this.objects.forEach((obj, index) => {
+                    if (this.isColliding(this.player, obj)) {
+                        if (obj.type === 'apple') {
+                            // Eat the apple for power-up!
+                            this.eatApple(index);
+                        } else if (obj.type === 'winApple') {
+                            // Win the game!
+                            this.winGame();
+                        } else {
+                            this.bounce(this.player, obj);
+                            this.bounceCount++;
+                            this.score += 5;
+                        }
+                        this.updateUI();
+                    }
+                });
+
+                // NPC vs NPC
+                for (let i = 0; i < this.npcs.length; i++) {
+                    for (let j = i + 1; j < this.npcs.length; j++) {
+                        if (this.isColliding(this.npcs[i], this.npcs[j])) {
+                            this.bounce(this.npcs[i], this.npcs[j]);
+                        }
+                    }
+                }
+            }
+
+            isColliding(a, b) {
+                const dx = a.x - b.x;
+                const dy = a.y - b.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                return distance < (a.radius + b.radius);
+            }
+
+            bounce(a, b) {
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance === 0) return;
+
+                const nx = dx / distance;
+                const ny = dy / distance;
+
+                // Separate objects
+                const overlap = (a.radius + b.radius) - distance;
+                a.x -= nx * overlap * 0.5;
+                a.y -= ny * overlap * 0.5;
+                b.x += nx * overlap * 0.5;
+                b.y += ny * overlap * 0.5;
+
+                // Calculate relative velocity for more realistic Newton's Cradle physics
+                const relativeVelX = a.vx - b.vx;
+                const relativeVelY = a.vy - b.vy;
+                const relativeSpeed = relativeVelX * nx + relativeVelY * ny;
+
+                // Don't resolve if velocities are separating
+                if (relativeSpeed > 0) return;
+
+                // Dynamic Newton's Cradle bounce effect
+                let bounceForce = 6;
+
+                // If player is involved and powered up, use stronger force
+                if ((a === this.player || b === this.player) && this.player.powered) {
+                    bounceForce = this.player.bounceForce;
+                }
+
+                // Apply mutual bounce
+                a.vx -= nx * bounceForce;
+                a.vy -= ny * bounceForce;
+                b.vx += nx * bounceForce;
+                b.vy += ny * bounceForce;
+            }
+
+            eatApple(appleIndex) {
+                // Remove the apple
+                this.objects.splice(appleIndex, 1);
+
+                // Power up Newton!
+                this.applesEaten++;
+                this.powerUpTime = this.maxPowerUpTime;
+                this.player.powered = true;
+                this.player.bounceForce = 12; // Double bounce force!
+                this.score += 20;
+
+                // Play apple eat sound
+                this.playSound(800, 0.2);
+
+                // Build charge level
+                if (this.chargeLevel < this.maxChargeLevel) {
+                    this.chargeLevel++;
+                    if (this.chargeLevel >= this.maxChargeLevel) {
+                        this.chargeReady = true;
+                    }
+                }
+
+                // Check if boss should spawn
+                if (!this.bossSpawned && this.applesEaten >= this.bossSpawnThreshold) {
+                    this.spawnBoss();
+                }
+
+                // Spawn a new apple elsewhere after 3 seconds
+                setTimeout(() => {
+                    this.spawnNewApple();
+                }, 3000);
+            }
+
+            spawnNewApple() {
+                const newApple = {
+                    x: Math.random() * (this.width - 100) + 50,
+                    y: Math.random() * (this.height - 100) + 50,
+                    vx: 0,
+                    vy: 0,
+                    radius: 12,
+                    color: '#D63031',
+                    type: 'apple'
+                };
+                this.objects.push(newApple);
+            }
+
+            updatePowerUp() {
+                if (this.powerUpTime > 0) {
+                    this.powerUpTime--;
+                    if (this.powerUpTime <= 0) {
+                        this.player.powered = false;
+                        this.player.bounceForce = 6; // Back to normal
+                    }
+                }
+
+                // Update charge cooldown
+                if (this.chargeCooldown > 0) {
+                    this.chargeCooldown--;
+                }
+
+                // Update player invincibility
+                if (this.player.invulnerable) {
+                    this.player.invulnerabilityTime--;
+                    if (this.player.invulnerabilityTime <= 0) {
+                        this.player.invulnerable = false;
+                    }
+                }
+            }
+
+            activateChargeField() {
+                console.log('Charge field activated!');
+
+                // Play charge sound
+                this.playSound(200, 0.5);
+
+                // Simple and safe implementation
+                this.chargeReady = false;
+                this.chargeLevel = 0;
+                this.chargeCooldown = this.maxChargeCooldown || 180;
+
+                // Create explosion effect
+                const chargeRadius = 120;
+                const playerX = this.player.x;
+                const playerY = this.player.y;
+
+                // Push away NPCs
+                for (let i = 0; i < this.npcs.length; i++) {
+                    const npc = this.npcs[i];
+                    const dx = npc.x - playerX;
+                    const dy = npc.y - playerY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < chargeRadius && distance > 0) {
+                        const force = 15;
+                        npc.vx += (dx / distance) * force;
+                        npc.vy += (dy / distance) * force;
+                    }
+                }
+
+                // Push away objects
+                for (let i = 0; i < this.objects.length; i++) {
+                    const obj = this.objects[i];
+                    const dx = obj.x - playerX;
+                    const dy = obj.y - playerY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < chargeRadius && distance > 0) {
+                        const force = 15;
+                        obj.vx += (dx / distance) * force;
+                        obj.vy += (dy / distance) * force;
+                    }
+                }
+
+                // Check if charge field hits boss
+                if (this.boss) {
+                    this.checkChargeFieldVsBoss();
+                }
+
+                // Add score
+                this.score += 100;
+                this.bounceCount += 10;
+
+                // In cheat mode, immediately reset charge
+                if (this.cheatMode) {
+                    this.chargeReady = true;
+                    this.chargeCooldown = 0;
+                }
+
+                console.log('Charge field completed successfully');
+            }
+
+            spawnBoss() {
+                this.bossSpawned = true;
+                this.boss = {
+                    x: 400,
+                    y: 300,
+                    vx: 0,
+                    vy: 0,
+                    radius: 30,
+                    baseRadius: 30,
+                    color: '#E0E0E0',
+                    health: 3,
+                    maxHealth: 3,
+                    aiSpeed: 0.5,
+                    aiDirection: Math.random() * Math.PI * 2,
+                    aiTimer: 0,
+                    aiChangeTime: 120,
+                    gravitationalPull: 2,
+                    applesEaten: 0,
+                    invulnerable: false,
+                    invulnerabilityTime: 0
+                };
+
+                // Show boss status
+                document.getElementById('bossStatus').style.display = 'block';
+            }
+
+            updateBoss() {
+                if (!this.boss) return;
+
+                // Boss AI movement
+                this.boss.aiTimer++;
+                if (this.boss.aiTimer >= this.boss.aiChangeTime) {
+                    this.boss.aiDirection = Math.random() * Math.PI * 2;
+                    this.boss.aiTimer = 0;
+                    this.boss.aiChangeTime = 60 + Math.random() * 120;
+                }
+
+                // Boss seeks apples
+                let nearestApple = null;
+                let nearestDistance = Infinity;
+                this.objects.forEach(obj => {
+                    if (obj.type === 'apple') {
+                        const dx = obj.x - this.boss.x;
+                        const dy = obj.y - this.boss.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        if (distance < nearestDistance) {
+                            nearestDistance = distance;
+                            nearestApple = obj;
+                        }
+                    }
+                });
+
+                // Move towards nearest apple
+                if (nearestApple) {
+                    const dx = nearestApple.x - this.boss.x;
+                    const dy = nearestApple.y - this.boss.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance > 0) {
+                        this.boss.vx += (dx / distance) * this.boss.aiSpeed * 0.3;
+                        this.boss.vy += (dy / distance) * this.boss.aiSpeed * 0.3;
+                    }
+                }
+
+                // Apply movement
+                this.boss.x += this.boss.vx;
+                this.boss.y += this.boss.vy;
+                this.boss.vx *= 0.95;
+                this.boss.vy *= 0.95;
+
+                // Keep boss in bounds
+                if (this.boss.x < this.boss.radius || this.boss.x > this.width - this.boss.radius) {
+                    this.boss.x = Math.max(this.boss.radius, Math.min(this.width - this.boss.radius, this.boss.x));
+                    this.boss.vx *= -0.7;
+                }
+                if (this.boss.y < this.boss.radius || this.boss.y > this.height - this.boss.radius) {
+                    this.boss.y = Math.max(this.boss.radius, Math.min(this.height - this.boss.radius, this.boss.y));
+                    this.boss.vy *= -0.7;
+                }
+
+                // Update invulnerability
+                if (this.boss.invulnerable) {
+                    this.boss.invulnerabilityTime--;
+                    if (this.boss.invulnerabilityTime <= 0) {
+                        this.boss.invulnerable = false;
+                    }
+                }
+
+                // Gravitational pull effect
+                this.applyGravitationalPull();
+
+                // Check if boss eats apples
+                this.checkBossAppleCollision();
+
+                // Check if boss touches player
+                this.checkBossPlayerCollision();
+            }
+
+            applyGravitationalPull() {
+                const pullRadius = this.boss.radius * 4;
+                const pullForce = this.boss.gravitationalPull;
+
+                // Pull NPCs
+                this.npcs.forEach(npc => {
+                    const dx = this.boss.x - npc.x;
+                    const dy = this.boss.y - npc.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < pullRadius && distance > 0) {
+                        const force = (pullForce / (distance * distance)) * 1000;
+                        npc.vx += (dx / distance) * force;
+                        npc.vy += (dy / distance) * force;
+                    }
+                });
+
+                // Pull objects
+                this.objects.forEach(obj => {
+                    const dx = this.boss.x - obj.x;
+                    const dy = this.boss.y - obj.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < pullRadius && distance > 0) {
+                        const force = (pullForce / (distance * distance)) * 1000;
+                        obj.vx += (dx / distance) * force;
+                        obj.vy += (dy / distance) * force;
+                    }
+                });
+
+                // Pull player (reduced when invulnerable)
+                const dx = this.boss.x - this.player.x;
+                const dy = this.boss.y - this.player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < pullRadius && distance > 0) {
+                    let playerPullForce = pullForce;
+
+                    // Reduce gravitational pull when player is invulnerable
+                    if (this.player.invulnerable) {
+                        playerPullForce *= 0.2; // Only 20% pull when invulnerable
+                    }
+
+                    const force = (playerPullForce / (distance * distance)) * 800;
+                    this.player.vx += (dx / distance) * force;
+                    this.player.vy += (dy / distance) * force;
+                }
+            }
+
+            checkBossAppleCollision() {
+                for (let i = this.objects.length - 1; i >= 0; i--) {
+                    const obj = this.objects[i];
+                    if (obj.type === 'apple' && this.isColliding(this.boss, obj)) {
+                        // Boss eats apple
+                        this.objects.splice(i, 1);
+                        this.boss.applesEaten++;
+                        this.boss.radius = this.boss.baseRadius + (this.boss.applesEaten * 5);
+                        this.boss.gravitationalPull += 0.5;
+
+                        // Spawn new apple
+                        setTimeout(() => {
+                            this.spawnNewApple();
+                        }, 2000);
+                        break;
+                    }
+                }
+            }
+
+            checkBossPlayerCollision() {
+                if (this.isColliding(this.boss, this.player) && !this.player.invulnerable) {
+                    // Player loses a life (unless in cheat mode)
+                    if (!this.cheatMode) {
+                        this.playerLives--;
+                    }
+
+                    // Play damage sound
+                    this.playSound(150, 0.3);
+
+                    // Make player invulnerable for 2 seconds
+                    this.player.invulnerable = true;
+                    this.player.invulnerabilityTime = 120; // 2 seconds at 60fps
+
+                    // Teleport player to safety instead of just pushing
+                    this.teleportPlayerToSafety();
+
+                    // Check game over (only if not in cheat mode)
+                    if (this.playerLives <= 0 && !this.cheatMode) {
+                        this.gameOver();
+                    }
+                }
+            }
+
+            teleportPlayerToSafety() {
+                // Find a safe spawn point away from the boss
+                const safeDistance = 200;
+                const attempts = 10;
+
+                for (let i = 0; i < attempts; i++) {
+                    // Try random positions around the map
+                    const angle = Math.random() * Math.PI * 2;
+                    const distance = safeDistance + Math.random() * 100;
+
+                    let newX = this.boss.x + Math.cos(angle) * distance;
+                    let newY = this.boss.y + Math.sin(angle) * distance;
+
+                    // Keep within bounds
+                    newX = Math.max(50, Math.min(this.width - 50, newX));
+                    newY = Math.max(50, Math.min(this.height - 50, newY));
+
+                    // Check if this position is far enough from boss
+                    const dx = newX - this.boss.x;
+                    const dy = newY - this.boss.y;
+                    const actualDistance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (actualDistance >= safeDistance) {
+                        // Safe position found
+                        this.player.x = newX;
+                        this.player.y = newY;
+                        this.player.vx = 0;
+                        this.player.vy = 0;
+
+                        // Play teleport sound
+                        this.playSound(600, 0.3);
+                        return;
+                    }
+                }
+
+                // Fallback: teleport to opposite corner
+                if (this.boss.x < this.width / 2) {
+                    this.player.x = this.width - 50;
+                } else {
+                    this.player.x = 50;
+                }
+
+                if (this.boss.y < this.height / 2) {
+                    this.player.y = this.height - 50;
+                } else {
+                    this.player.y = 50;
+                }
+
+                this.player.vx = 0;
+                this.player.vy = 0;
+
+                // Play teleport sound for fallback too
+                this.playSound(600, 0.3);
+            }
+
+            checkChargeFieldVsBoss() {
+                if (!this.boss || this.boss.invulnerable) return;
+
+                const dx = this.boss.x - this.player.x;
+                const dy = this.boss.y - this.player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < 120) { // Charge field radius
+                    this.boss.health--;
+                    this.boss.invulnerable = true;
+                    this.boss.invulnerabilityTime = 60; // 1 second
+
+                    // Play boss hit sound
+                    this.playSound(400, 0.2);
+
+                    // Push boss away
+                    const force = 15;
+                    this.boss.vx += (dx / distance) * force;
+                    this.boss.vy += (dy / distance) * force;
+
+                    if (this.boss.health <= 0) {
+                        this.defeatBoss();
+                    }
+                }
+            }
+
+            defeatBoss() {
+                // Remove boss
+                this.boss = null;
+                this.bossSpawned = false;
+                document.getElementById('bossStatus').style.display = 'none';
+
+                // Spawn MASSIVE win apple (10x normal size)
+                this.winApple = {
+                    x: 400,
+                    y: 300,
+                    vx: 0,
+                    vy: 0,
+                    radius: 120, // 10x normal apple size (12 * 10)
+                    color: '#FFD700',
+                    type: 'winApple',
+                    pulse: 0
+                };
+                this.objects.push(this.winApple);
+
+                // Play boss defeat sound
+                this.playSound(1200, 2.0);
+            }
+
+            gameOver() {
+                this.gameState = 'gameOver';
+                const overlay = document.getElementById('gameOverlay');
+                const content = document.getElementById('overlayContent');
+
+                content.innerHTML = `
+                    <h1 style="color: #ff0000; font-size: 48px; margin-bottom: 20px;">GAME OVER</h1>
+                    <p style="font-size: 24px; margin-bottom: 10px;">Einstein has defeated Newton!</p>
+                    <p style="font-size: 18px; margin-bottom: 20px;">Final Score: ${this.score}</p>
+                    <p style="font-size: 16px;">Refresh to play again</p>
+                `;
+
+                overlay.style.display = 'flex';
+            }
+
+            winGame() {
+                this.gameState = 'transforming';
+                this.cutsceneTimer = 0;
+                this.transformationStage = 0; // 0: normal, 1: rocket, 2: moon
+
+                // Remove win apple
+                this.objects = this.objects.filter(obj => obj.type !== 'winApple');
+
+                // Play transformation sound
+                this.playSound(800, 1.0);
+
+                // Start transformation sequence
+                this.startTransformation();
+            }
+
+            startTransformation() {
+                // Stage 0: Newton absorbs apple power (immediate)
+                this.transformationStage = 1;
+
+                // After 2 seconds, transform to rocket
+                setTimeout(() => {
+                    if (this.gameState === 'transforming') {
+                        this.transformationStage = 2;
+                        this.playSound(400, 1.5);
+                    }
+                }, 2000);
+
+                // After 4 seconds, show moon background and win message
+                setTimeout(() => {
+                    if (this.gameState === 'transforming') {
+                        this.transformationStage = 3;
+                        this.showFinalWinMessage();
+                    }
+                }, 4000);
+            }
+
+            showFinalWinMessage() {
+                const overlay = document.getElementById('gameOverlay');
+                const content = document.getElementById('overlayContent');
+
+                content.innerHTML = `
+                    <h1 style="color: #FFD700; font-size: 48px; margin-bottom: 20px;">🌙 MISSION ACCOMPLISHED! 🌙</h1>
+                    <div style="font-size: 80px; margin: 20px;">🚀🌙</div>
+                    <p style="font-size: 24px; margin-bottom: 10px;">Newton has reached the moon!</p>
+                    <p style="font-size: 20px; margin-bottom: 10px;">Final Score: ${this.score}</p>
+                    <p style="font-size: 18px; margin-bottom: 10px;">Apples Eaten: ${this.applesEaten}</p>
+                    <p style="font-size: 18px; margin-bottom: 10px;">Bounces: ${this.bounceCount}</p>
+                    <p style="font-size: 16px; margin-top: 20px;">You defeated Einstein and conquered physics!</p>
+                    <p style="font-size: 14px; margin-top: 20px; color: #ccc;">Refresh to play again</p>
+                `;
+
+                overlay.style.display = 'flex';
+            }
+
+            initAudio() {
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.startBackgroundMusic();
+                } catch (error) {
+                    console.log('Audio not supported:', error);
+                }
+            }
+
+            startBackgroundMusic() {
+                if (!this.audioContext || this.musicPlaying) return;
+
+                this.musicPlaying = true;
+                this.playMelody();
+            }
+
+            playMelody() {
+                if (!this.audioContext) return;
+
+                // Dr. Mario-style melody notes (simplified)
+                const melody = [
+                    { freq: 523.25, duration: 0.3 }, // C5
+                    { freq: 587.33, duration: 0.3 }, // D5
+                    { freq: 659.25, duration: 0.3 }, // E5
+                    { freq: 698.46, duration: 0.3 }, // F5
+                    { freq: 783.99, duration: 0.6 }, // G5
+                    { freq: 659.25, duration: 0.3 }, // E5
+                    { freq: 523.25, duration: 0.6 }, // C5
+                    { freq: 587.33, duration: 0.3 }, // D5
+                    { freq: 659.25, duration: 0.3 }, // E5
+                    { freq: 523.25, duration: 0.6 }, // C5
+                    { freq: 440.00, duration: 0.6 }, // A4
+                    { freq: 493.88, duration: 0.3 }, // B4
+                    { freq: 523.25, duration: 0.9 }, // C5
+                    { freq: 0, duration: 0.3 }, // Rest
+                ];
+
+                let currentTime = this.audioContext.currentTime;
+
+                melody.forEach((note, index) => {
+                    if (note.freq > 0) {
+                        this.playNote(note.freq, currentTime, note.duration);
+                    }
+                    currentTime += note.duration;
+                });
+
+                // Loop the melody
+                setTimeout(() => {
+                    if (this.musicPlaying) {
+                        this.playMelody();
+                    }
+                }, currentTime * 1000 - this.audioContext.currentTime * 1000 + 1000);
+            }
+
+            playNote(frequency, startTime, duration) {
+                if (!this.audioContext) return;
+
+                // Create oscillator for the note
+                const oscillator = this.audioContext.createOscillator();
+                const gainNode = this.audioContext.createGain();
+
+                // 8-bit square wave sound
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(frequency, startTime);
+
+                // Envelope for 8-bit sound
+                gainNode.gain.setValueAtTime(0, startTime);
+                gainNode.gain.linearRampToValueAtTime(0.1, startTime + 0.01);
+                gainNode.gain.exponentialRampToValueAtTime(0.05, startTime + duration * 0.3);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+                // Connect and play
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+
+                oscillator.start(startTime);
+                oscillator.stop(startTime + duration);
+            }
+
+            playSound(frequency, duration = 0.1) {
+                if (!this.audioContext) return;
+
+                const oscillator = this.audioContext.createOscillator();
+                const gainNode = this.audioContext.createGain();
+
+                oscillator.type = 'square';
+                oscillator.frequency.setValueAtTime(frequency, this.audioContext.currentTime);
+
+                gainNode.gain.setValueAtTime(0.1, this.audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + duration);
+
+                oscillator.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+
+                oscillator.start();
+                oscillator.stop(this.audioContext.currentTime + duration);
+            }
+
+            setupMusicToggle() {
+                const musicButton = document.getElementById('musicToggle');
+                musicButton.addEventListener('click', () => {
+                    if (!this.audioContext) {
+                        this.initAudio();
+                    } else if (this.musicPlaying) {
+                        this.musicPlaying = false;
+                        musicButton.textContent = '🔇 Music Off';
+                    } else {
+                        this.musicPlaying = true;
+                        this.playMelody();
+                        musicButton.textContent = '🎵 Music On';
+                    }
+                });
+            }
+
+            toggleCheatMode() {
+                this.cheatMode = !this.cheatMode;
+
+                if (this.cheatMode) {
+                    // Enable cheat mode
+                    console.log('🎮 CHEAT MODE ACTIVATED! 🎮');
+                    console.log('- Unlimited lives');
+                    console.log('- Unlimited charge field uses');
+                    console.log('- Press T again to disable');
+
+                    // Give unlimited lives
+                    this.playerLives = 999;
+
+                    // Make charge always ready
+                    this.chargeReady = true;
+                    this.chargeCooldown = 0;
+
+                    // Play cheat activation sound
+                    this.playSound(1000, 0.5);
+
+                } else {
+                    // Disable cheat mode
+                    console.log('🎮 CHEAT MODE DISABLED 🎮');
+
+                    // Reset to normal lives
+                    this.playerLives = Math.min(this.playerLives, 3);
+
+                    // Reset charge system to normal
+                    if (this.chargeLevel < this.maxChargeLevel) {
+                        this.chargeReady = false;
+                    }
+
+                    // Play cheat deactivation sound
+                    this.playSound(500, 0.3);
+                }
+
+                this.updateUI();
+            }
+
+            updateUI() {
+                document.getElementById('bounceCount').textContent = this.bounceCount;
+                document.getElementById('score').textContent = this.score;
+                document.getElementById('appleCount').textContent = this.applesEaten;
+                document.getElementById('lives').textContent = this.playerLives;
+
+                const powerStatus = document.getElementById('powerStatus');
+                if (this.player.powered) {
+                    powerStatus.style.display = 'block';
+                    powerStatus.textContent = `⚡ POWERED UP! (${Math.ceil(this.powerUpTime / 60)}s) ⚡`;
+                } else {
+                    powerStatus.style.display = 'none';
+                }
+
+                const bossStatus = document.getElementById('bossStatus');
+                if (this.boss) {
+                    bossStatus.style.display = 'block';
+                    bossStatus.textContent = `🧠 EINSTEIN BOSS! Health: ${this.boss.health}/${this.boss.maxHealth} 🧠`;
+                } else {
+                    bossStatus.style.display = 'none';
+                }
+
+                // Update cheat mode status
+                const cheatStatus = document.getElementById('cheatStatus');
+                if (this.cheatMode) {
+                    cheatStatus.style.display = 'block';
+                    cheatStatus.textContent = '🎮 CHEAT MODE ON 🎮';
+                } else {
+                    cheatStatus.style.display = 'none';
+                }
+
+                // Update charge bar
+                const chargeProgress = document.getElementById('chargeProgress');
+                const chargeStatus = document.getElementById('chargeStatus');
+                const chargePercent = (this.chargeLevel / this.maxChargeLevel) * 100;
+                chargeProgress.style.width = `${chargePercent}%`;
+
+                if (this.chargeCooldown > 0) {
+                    chargeStatus.textContent = `Cooldown: ${Math.ceil(this.chargeCooldown / 60)}s`;
+                    chargeStatus.style.color = '#ff6666';
+                } else if (this.chargeReady) {
+                    chargeStatus.textContent = 'READY! Press SPACEBAR!';
+                    chargeStatus.style.color = '#00ff00';
+                    // Pulsing effect for ready state
+                    chargeStatus.style.fontWeight = Math.sin(Date.now() * 0.01) > 0 ? 'bold' : 'normal';
+                } else if (this.chargeLevel > 0) {
+                    chargeStatus.textContent = `${this.chargeLevel}/${this.maxChargeLevel} apples`;
+                    chargeStatus.style.color = '#ffff00';
+                } else {
+                    chargeStatus.textContent = 'Need 5 apples to unlock';
+                    chargeStatus.style.color = '#666';
+                }
+            }
+
+            render() {
+                // Clear canvas with appropriate background
+                if (this.gameState === 'transforming' && this.transformationStage >= 3) {
+                    // Moon background
+                    const moonGradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+                    moonGradient.addColorStop(0, '#000011');
+                    moonGradient.addColorStop(0.7, '#1a1a2e');
+                    moonGradient.addColorStop(1, '#16213e');
+                    this.ctx.fillStyle = moonGradient;
+                    this.ctx.fillRect(0, 0, this.width, this.height);
+
+                    // Draw stars
+                    this.ctx.fillStyle = '#ffffff';
+                    for (let i = 0; i < 50; i++) {
+                        const x = (i * 137) % this.width;
+                        const y = (i * 211) % this.height;
+                        this.ctx.beginPath();
+                        this.ctx.arc(x, y, 1, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+
+                    // Draw moon surface
+                    this.ctx.fillStyle = '#C0C0C0';
+                    this.ctx.fillRect(0, this.height - 100, this.width, 100);
+
+                    // Moon craters
+                    this.ctx.fillStyle = '#A0A0A0';
+                    this.ctx.beginPath();
+                    this.ctx.arc(200, this.height - 50, 20, 0, Math.PI * 2);
+                    this.ctx.arc(500, this.height - 30, 15, 0, Math.PI * 2);
+                    this.ctx.arc(650, this.height - 70, 25, 0, Math.PI * 2);
+                    this.ctx.fill();
+                } else {
+                    // Normal Earth background
+                    const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
+                    gradient.addColorStop(0, '#87CEEB');
+                    gradient.addColorStop(0.7, '#98FB98');
+                    gradient.addColorStop(1, '#90EE90');
+                    this.ctx.fillStyle = gradient;
+                    this.ctx.fillRect(0, 0, this.width, this.height);
+                }
+
+                // Draw improved cobblestone background
+                this.drawCobblestones();
+
+                // Draw buildings
+                this.drawBuildings();
+
+                // Draw objects with better graphics
+                this.drawObjects();
+
+                // Draw NPCs with better graphics
+                this.drawNPCs();
+
+                // Draw boss if spawned
+                if (this.boss) {
+                    this.drawBoss();
+                }
+
+                // Draw player (Isaac Newton) with better graphics
+                this.drawPlayer();
+
+                // Add atmospheric effects
+                this.drawAtmosphere();
+
+                // Draw charge field effect
+                this.drawChargeField();
+            }
+
+            drawCobblestones() {
+                for (let x = 0; x < this.width; x += 30) {
+                    for (let y = 0; y < this.height; y += 30) {
+                        // Cobblestone base
+                        this.ctx.fillStyle = '#8B7355';
+                        this.ctx.fillRect(x + 2, y + 2, 26, 26);
+
+                        // Cobblestone highlight
+                        this.ctx.fillStyle = '#A0845C';
+                        this.ctx.fillRect(x + 2, y + 2, 24, 24);
+
+                        // Cobblestone shadow
+                        this.ctx.fillStyle = '#6B5B47';
+                        this.ctx.fillRect(x + 24, y + 24, 4, 4);
+                        this.ctx.fillRect(x + 2, y + 24, 26, 4);
+                        this.ctx.fillRect(x + 24, y + 2, 4, 26);
+                    }
+                }
+            }
+
+            drawObjects() {
+                this.objects.forEach(obj => {
+                    this.ctx.save();
+                    this.ctx.translate(obj.x, obj.y);
+
+                    switch (obj.type) {
+                        case 'apple':
+                            // Apple body with gradient
+                            const appleGradient = this.ctx.createRadialGradient(-3, -3, 0, 0, 0, obj.radius);
+                            appleGradient.addColorStop(0, '#FF6B6B');
+                            appleGradient.addColorStop(1, '#D63031');
+                            this.ctx.fillStyle = appleGradient;
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
+                            this.ctx.fill();
+
+                            // Apple stem
+                            this.ctx.fillStyle = '#8B4513';
+                            this.ctx.fillRect(-2, -obj.radius, 4, 6);
+
+                            // Apple leaf
+                            this.ctx.fillStyle = '#228B22';
+                            this.ctx.beginPath();
+                            this.ctx.ellipse(3, -obj.radius + 2, 4, 2, Math.PI / 4, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+
+                        case 'winApple':
+                            // MASSIVE golden apple with pulsing effect
+                            const pulse = Math.sin(Date.now() * 0.005) * 0.1 + 1;
+                            const winRadius = obj.radius * pulse;
+
+                            // Golden glow
+                            const glowGradient = this.ctx.createRadialGradient(0, 0, 0, 0, 0, winRadius + 20);
+                            glowGradient.addColorStop(0, 'rgba(255, 215, 0, 0.8)');
+                            glowGradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+                            this.ctx.fillStyle = glowGradient;
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, winRadius + 20, 0, Math.PI * 2);
+                            this.ctx.fill();
+
+                            // Apple body
+                            const winAppleGradient = this.ctx.createRadialGradient(-winRadius / 3, -winRadius / 3, 0, 0, 0, winRadius);
+                            winAppleGradient.addColorStop(0, '#FFD700');
+                            winAppleGradient.addColorStop(0.7, '#FFA500');
+                            winAppleGradient.addColorStop(1, '#FF8C00');
+                            this.ctx.fillStyle = winAppleGradient;
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, winRadius, 0, Math.PI * 2);
+                            this.ctx.fill();
+
+                            // Sparkles around the apple
+                            for (let i = 0; i < 12; i++) {
+                                const angle = (i / 12) * Math.PI * 2 + Date.now() * 0.001;
+                                const sparkleX = Math.cos(angle) * (winRadius + 30);
+                                const sparkleY = Math.sin(angle) * (winRadius + 30);
+
+                                this.ctx.fillStyle = '#FFFFFF';
+                                this.ctx.beginPath();
+                                this.ctx.arc(sparkleX, sparkleY, 3, 0, Math.PI * 2);
+                                this.ctx.fill();
+                            }
+
+                            // Giant stem
+                            this.ctx.fillStyle = '#8B4513';
+                            this.ctx.fillRect(-8, -winRadius, 16, 24);
+
+                            // Giant leaf
+                            this.ctx.fillStyle = '#228B22';
+                            this.ctx.beginPath();
+                            this.ctx.ellipse(12, -winRadius + 8, 16, 8, Math.PI / 4, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+
+                        case 'barrel':
+                            // Barrel body with wood texture
+                            const barrelGradient = this.ctx.createLinearGradient(-obj.radius, 0, obj.radius, 0);
+                            barrelGradient.addColorStop(0, '#8B4513');
+                            barrelGradient.addColorStop(0.5, '#A0522D');
+                            barrelGradient.addColorStop(1, '#654321');
+                            this.ctx.fillStyle = barrelGradient;
+                            this.ctx.fillRect(-obj.radius, -obj.radius, obj.radius * 2, obj.radius * 2);
+
+                            // Metal bands
+                            this.ctx.fillStyle = '#696969';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 3, obj.radius * 2, 3);
+                            this.ctx.fillRect(-obj.radius, obj.radius / 3, obj.radius * 2, 3);
+                            break;
+
+                        case 'book':
+                            // Book cover
+                            this.ctx.fillStyle = '#6C5CE7';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 2, obj.radius * 2, obj.radius);
+
+                            // Book pages
+                            this.ctx.fillStyle = '#F8F8FF';
+                            this.ctx.fillRect(-obj.radius + 2, -obj.radius / 2 + 1, obj.radius * 2 - 4, obj.radius - 2);
+
+                            // Book title
+                            this.ctx.fillStyle = '#FFD700';
+                            this.ctx.font = '8px serif';
+                            this.ctx.textAlign = 'center';
+                            this.ctx.fillText('PHYSICS', 0, 2);
+                            break;
+
+                        case 'scroll':
+                            // Scroll paper
+                            this.ctx.fillStyle = '#F5DEB3';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 3, obj.radius * 2, obj.radius * 2 / 3);
+                            // Scroll ends
+                            this.ctx.fillStyle = '#8B4513';
+                            this.ctx.fillRect(-obj.radius - 2, -obj.radius / 3, 4, obj.radius * 2 / 3);
+                            this.ctx.fillRect(obj.radius - 2, -obj.radius / 3, 4, obj.radius * 2 / 3);
+                            break;
+
+                        case 'manuscript':
+                            // Manuscript pages
+                            this.ctx.fillStyle = '#FFFACD';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 2, obj.radius * 2, obj.radius);
+                            // Writing lines
+                            this.ctx.strokeStyle = '#000';
+                            this.ctx.lineWidth = 1;
+                            for (let i = -obj.radius / 3; i < obj.radius / 3; i += 3) {
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(-obj.radius + 2, i);
+                                this.ctx.lineTo(obj.radius - 2, i);
+                                this.ctx.stroke();
+                            }
+                            break;
+
+                        case 'telescope':
+                            // Telescope body
+                            this.ctx.fillStyle = '#A29BFE';
+                            this.ctx.fillRect(-obj.radius, -4, obj.radius * 2, 8);
+                            // Telescope lens
+                            this.ctx.fillStyle = '#87CEEB';
+                            this.ctx.beginPath();
+                            this.ctx.arc(obj.radius, 0, 4, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            // Eyepiece
+                            this.ctx.fillStyle = '#654321';
+                            this.ctx.fillRect(-obj.radius - 3, -2, 3, 4);
+                            break;
+
+                        case 'compass':
+                            // Compass body
+                            this.ctx.fillStyle = '#FDCB6E';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            // Compass needle
+                            this.ctx.strokeStyle = '#E17055';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(0, -obj.radius / 2);
+                            this.ctx.lineTo(0, obj.radius / 2);
+                            this.ctx.stroke();
+                            break;
+
+                        case 'prism':
+                            // Triangular prism
+                            this.ctx.fillStyle = '#E84393';
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(0, -obj.radius);
+                            this.ctx.lineTo(-obj.radius, obj.radius);
+                            this.ctx.lineTo(obj.radius, obj.radius);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            // Rainbow effect
+                            this.ctx.strokeStyle = '#FF0000';
+                            this.ctx.lineWidth = 1;
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(obj.radius, 0);
+                            this.ctx.lineTo(obj.radius + 8, -2);
+                            this.ctx.stroke();
+                            break;
+
+                        case 'astrolabe':
+                            // Astrolabe circle
+                            this.ctx.fillStyle = '#00CEC9';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            // Astrolabe markings
+                            this.ctx.strokeStyle = '#000';
+                            this.ctx.lineWidth = 1;
+                            for (let i = 0; i < 8; i++) {
+                                const angle = (i / 8) * Math.PI * 2;
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(Math.cos(angle) * obj.radius * 0.8, Math.sin(angle) * obj.radius * 0.8);
+                                this.ctx.lineTo(Math.cos(angle) * obj.radius, Math.sin(angle) * obj.radius);
+                                this.ctx.stroke();
+                            }
+                            break;
+
+                        case 'chest':
+                            // Chest body
+                            this.ctx.fillStyle = '#DDA0DD';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 2, obj.radius * 2, obj.radius);
+                            // Chest lock
+                            this.ctx.fillStyle = '#FFD700';
+                            this.ctx.fillRect(-2, -2, 4, 4);
+                            break;
+
+                        case 'crate':
+                            // Wooden crate
+                            this.ctx.fillStyle = '#CD853F';
+                            this.ctx.fillRect(-obj.radius, -obj.radius, obj.radius * 2, obj.radius * 2);
+                            // Wood planks
+                            this.ctx.strokeStyle = '#8B4513';
+                            this.ctx.lineWidth = 2;
+                            for (let i = -obj.radius; i < obj.radius; i += 6) {
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(i, -obj.radius);
+                                this.ctx.lineTo(i, obj.radius);
+                                this.ctx.stroke();
+                            }
+                            break;
+
+                        case 'coin':
+                            // Gold coin
+                            this.ctx.fillStyle = '#FFD700';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            // Coin marking
+                            this.ctx.strokeStyle = '#B8860B';
+                            this.ctx.lineWidth = 1;
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius * 0.7, 0, Math.PI * 2);
+                            this.ctx.stroke();
+                            break;
+
+                        case 'candle':
+                            // Candle body
+                            this.ctx.fillStyle = '#FF7675';
+                            this.ctx.fillRect(-3, -obj.radius, 6, obj.radius * 2);
+                            // Flame
+                            this.ctx.fillStyle = '#FDCB6E';
+                            this.ctx.beginPath();
+                            this.ctx.ellipse(0, -obj.radius - 3, 2, 4, 0, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+
+                        case 'inkwell':
+                            // Inkwell body
+                            this.ctx.fillStyle = '#74B9FF';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, 0, obj.radius, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            // Ink surface
+                            this.ctx.fillStyle = '#000';
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, -2, obj.radius * 0.7, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+
+                        case 'quill':
+                            // Quill feather
+                            this.ctx.fillStyle = '#A0522D';
+                            this.ctx.fillRect(-1, -obj.radius, 2, obj.radius * 2);
+                            // Feather details
+                            this.ctx.strokeStyle = '#8B4513';
+                            this.ctx.lineWidth = 1;
+                            for (let i = -obj.radius; i < obj.radius; i += 3) {
+                                this.ctx.beginPath();
+                                this.ctx.moveTo(-1, i);
+                                this.ctx.lineTo(-4, i - 1);
+                                this.ctx.moveTo(1, i);
+                                this.ctx.lineTo(4, i - 1);
+                                this.ctx.stroke();
+                            }
+                            break;
+
+                        case 'log':
+                            // Log body
+                            this.ctx.fillStyle = '#8B4513';
+                            this.ctx.fillRect(-obj.radius, -obj.radius / 3, obj.radius * 2, obj.radius * 2 / 3);
+                            // Tree rings
+                            this.ctx.strokeStyle = '#654321';
+                            this.ctx.lineWidth = 1;
+                            for (let i = 2; i < obj.radius; i += 3) {
+                                this.ctx.beginPath();
+                                this.ctx.arc(obj.radius, 0, i, Math.PI / 2, 3 * Math.PI / 2);
+                                this.ctx.stroke();
+                            }
+                            break;
+
+                        case 'stone':
+                            // Stone
+                            this.ctx.fillStyle = '#696969';
+                            this.ctx.beginPath();
+                            // Irregular stone shape
+                            this.ctx.moveTo(obj.radius * 0.8, 0);
+                            this.ctx.lineTo(obj.radius * 0.3, -obj.radius * 0.9);
+                            this.ctx.lineTo(-obj.radius * 0.5, -obj.radius * 0.7);
+                            this.ctx.lineTo(-obj.radius * 0.9, obj.radius * 0.2);
+                            this.ctx.lineTo(-obj.radius * 0.2, obj.radius * 0.8);
+                            this.ctx.lineTo(obj.radius * 0.6, obj.radius * 0.5);
+                            this.ctx.closePath();
+                            this.ctx.fill();
+                            break;
+
+                        case 'herb':
+                            // Herb leaves
+                            this.ctx.fillStyle = '#32CD32';
+                            for (let i = 0; i < 6; i++) {
+                                const angle = (i / 6) * Math.PI * 2;
+                                this.ctx.beginPath();
+                                this.ctx.ellipse(
+                                    Math.cos(angle) * obj.radius * 0.5,
+                                    Math.sin(angle) * obj.radius * 0.5,
+                                    obj.radius * 0.6, obj.radius * 0.3,
+                                    angle, 0, Math.PI * 2
+                                );
+                                this.ctx.fill();
+                            }
+                            break;
+                    }
+
+                    // Add shadow
+                    this.ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    this.ctx.beginPath();
+                    this.ctx.ellipse(2, obj.radius + 2, obj.radius * 0.8, obj.radius * 0.3, 0, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    this.ctx.restore();
+                });
+            }
+
+            drawNPCs() {
+                this.npcs.forEach(npc => {
+                    this.ctx.save();
+                    this.ctx.translate(npc.x, npc.y);
+
+                    // Shadow
+                    this.ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    this.ctx.beginPath();
+                    this.ctx.ellipse(2, npc.radius + 2, npc.radius * 0.8, npc.radius * 0.3, 0, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Body with gradient
+                    const bodyGradient = this.ctx.createRadialGradient(-3, -3, 0, 0, 0, npc.radius);
+                    bodyGradient.addColorStop(0, npc.color);
+                    bodyGradient.addColorStop(1, this.darkenColor(npc.color));
+                    this.ctx.fillStyle = bodyGradient;
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, npc.radius, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Face
+                    this.ctx.fillStyle = '#FDBCB4';
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, -5, 10, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Character-specific features
+                    switch (npc.type) {
+                        case 'merchant':
+                            // Hat
+                            this.ctx.fillStyle = '#8B4513';
+                            this.ctx.fillRect(-8, -18, 16, 10);
+                            this.ctx.fillStyle = '#654321';
+                            this.ctx.fillRect(-6, -16, 12, 6);
+                            break;
+                        case 'scholar':
+                            // Glasses
+                            this.ctx.strokeStyle = '#000';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.beginPath();
+                            this.ctx.arc(-4, -5, 4, 0, Math.PI * 2);
+                            this.ctx.arc(4, -5, 4, 0, Math.PI * 2);
+                            this.ctx.moveTo(0, -5);
+                            this.ctx.lineTo(0, -3);
+                            this.ctx.stroke();
+                            break;
+                        case 'baker':
+                            // Chef hat
+                            this.ctx.fillStyle = '#FFF';
+                            this.ctx.fillRect(-6, -20, 12, 15);
+                            this.ctx.beginPath();
+                            this.ctx.arc(0, -20, 6, 0, Math.PI);
+                            this.ctx.fill();
+                            break;
+                        case 'child':
+                            // Smaller with rosy cheeks
+                            this.ctx.fillStyle = '#FFB6C1';
+                            this.ctx.beginPath();
+                            this.ctx.arc(-4, -3, 2, 0, Math.PI * 2);
+                            this.ctx.arc(4, -3, 2, 0, Math.PI * 2);
+                            this.ctx.fill();
+                            break;
+                        case 'noble':
+                            // Crown
+                            this.ctx.fillStyle = '#FFD700';
+                            this.ctx.fillRect(-6, -18, 12, 8);
+                            // Crown points
+                            this.ctx.beginPath();
+                            this.ctx.moveTo(-6, -18);
+                            this.ctx.lineTo(-3, -22);
+                            this.ctx.lineTo(0, -18);
+                            this.ctx.lineTo(3, -22);
+                            this.ctx.lineTo(6, -18);
+                            this.ctx.fill();
+                            break;
+                    }
+
+                    // Eyes
+                    this.ctx.fillStyle = '#000';
+                    this.ctx.beginPath();
+                    this.ctx.arc(-3, -7, 1.5, 0, Math.PI * 2);
+                    this.ctx.arc(3, -7, 1.5, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Smile
+                    this.ctx.strokeStyle = '#000';
+                    this.ctx.lineWidth = 1;
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, -3, 3, 0, Math.PI);
+                    this.ctx.stroke();
+
+                    this.ctx.restore();
+                });
+            }
+
+            drawBoss() {
+                this.ctx.save();
+                this.ctx.translate(this.boss.x, this.boss.y);
+
+                // Gravitational field effect
+                const fieldRadius = this.boss.radius * 4;
+                const fieldGradient = this.ctx.createRadialGradient(0, 0, this.boss.radius, 0, 0, fieldRadius);
+                fieldGradient.addColorStop(0, 'rgba(128, 0, 128, 0.3)');
+                fieldGradient.addColorStop(1, 'rgba(128, 0, 128, 0)');
+                this.ctx.fillStyle = fieldGradient;
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, fieldRadius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Boss shadow
+                this.ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                this.ctx.beginPath();
+                this.ctx.ellipse(3, this.boss.radius + 3, this.boss.radius * 0.8, this.boss.radius * 0.3, 0, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Boss body (Einstein)
+                const bodyGradient = this.ctx.createRadialGradient(-5, -5, 0, 0, 0, this.boss.radius);
+                if (this.boss.invulnerable) {
+                    bodyGradient.addColorStop(0, '#FF6B6B');
+                    bodyGradient.addColorStop(1, '#E55555');
+                } else {
+                    bodyGradient.addColorStop(0, '#F0F0F0');
+                    bodyGradient.addColorStop(1, '#E0E0E0');
+                }
+                this.ctx.fillStyle = bodyGradient;
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, this.boss.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Einstein's face
+                this.ctx.fillStyle = '#FDBCB4';
+                this.ctx.beginPath();
+                this.ctx.arc(0, -8, this.boss.radius * 0.6, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Einstein's wild hair
+                this.ctx.fillStyle = '#C0C0C0';
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const hairX = Math.cos(angle) * this.boss.radius * 0.8;
+                    const hairY = Math.sin(angle) * this.boss.radius * 0.8 - 8;
+                    this.ctx.beginPath();
+                    this.ctx.arc(hairX, hairY, this.boss.radius * 0.2, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Einstein's mustache
+                this.ctx.fillStyle = '#808080';
+                this.ctx.fillRect(-this.boss.radius * 0.3, -2, this.boss.radius * 0.6, this.boss.radius * 0.1);
+
+                // Eyes
+                this.ctx.fillStyle = '#000';
+                this.ctx.beginPath();
+                this.ctx.arc(-this.boss.radius * 0.2, -this.boss.radius * 0.3, this.boss.radius * 0.08, 0, Math.PI * 2);
+                this.ctx.arc(this.boss.radius * 0.2, -this.boss.radius * 0.3, this.boss.radius * 0.08, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Health indicator
+                for (let i = 0; i < this.boss.maxHealth; i++) {
+                    this.ctx.fillStyle = i < this.boss.health ? '#ff0000' : '#666666';
+                    this.ctx.fillRect(-this.boss.radius + i * 8, -this.boss.radius - 10, 6, 6);
+                }
+
+                // E=mc² formula floating around Einstein
+                this.ctx.fillStyle = '#4169E1';
+                this.ctx.font = '12px serif';
+                this.ctx.textAlign = 'center';
+                const formulaAngle = Date.now() * 0.002;
+                const formulaX = Math.cos(formulaAngle) * (this.boss.radius + 15);
+                const formulaY = Math.sin(formulaAngle) * (this.boss.radius + 15);
+                this.ctx.fillText('E=mc²', formulaX, formulaY);
+
+                this.ctx.restore();
+            }
+
+            drawPlayer() {
+                this.ctx.save();
+                this.ctx.translate(this.player.x, this.player.y);
+
+                // If transforming, draw rocket instead of Newton
+                if (this.gameState === 'transforming' && this.transformationStage >= 2) {
+                    this.drawRocket();
+                    this.ctx.restore();
+                    return;
+                }
+
+                // Invincibility flashing effect
+                if (this.player.invulnerable) {
+                    const flash = Math.sin(Date.now() * 0.02) > 0;
+                    if (!flash) {
+                        this.ctx.globalAlpha = 0.5;
+                    }
+
+                    // Blue invincibility aura
+                    this.ctx.fillStyle = 'rgba(0, 150, 255, 0.4)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, this.player.radius + 6, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Teleport sparkles when just teleported
+                    if (this.player.invulnerabilityTime > 100) { // First 0.33 seconds
+                        for (let i = 0; i < 8; i++) {
+                            const angle = (i / 8) * Math.PI * 2;
+                            const sparkleX = Math.cos(angle) * (this.player.radius + 10);
+                            const sparkleY = Math.sin(angle) * (this.player.radius + 10);
+
+                            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                            this.ctx.beginPath();
+                            this.ctx.arc(sparkleX, sparkleY, 2, 0, Math.PI * 2);
+                            this.ctx.fill();
+                        }
+                    }
+                }
+
+                // Power-up glow effect
+                if (this.player.powered) {
+                    this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, this.player.radius + 8, 0, Math.PI * 2);
+                    this.ctx.fill();
+
+                    // Pulsing effect
+                    const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
+                    this.ctx.fillStyle = `rgba(255, 215, 0, ${pulse * 0.2})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, this.player.radius + 12, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Shadow
+                this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                this.ctx.beginPath();
+                this.ctx.ellipse(2, this.player.radius + 2, this.player.radius * 0.8, this.player.radius * 0.3, 0, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Body with gradient (glowing when powered up)
+                const bodyGradient = this.ctx.createRadialGradient(-3, -3, 0, 0, 0, this.player.radius);
+                if (this.player.powered) {
+                    bodyGradient.addColorStop(0, '#FFD700');
+                    bodyGradient.addColorStop(0.5, '#FFA500');
+                    bodyGradient.addColorStop(1, '#FF6347');
+                } else {
+                    bodyGradient.addColorStop(0, '#A0522D');
+                    bodyGradient.addColorStop(1, '#8B4513');
+                }
+                this.ctx.fillStyle = bodyGradient;
+                this.ctx.beginPath();
+                this.ctx.arc(0, 0, this.player.radius, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Face
+                this.ctx.fillStyle = '#FDBCB4';
+                this.ctx.beginPath();
+                this.ctx.arc(0, -5, 12, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Newton's famous wig (more detailed)
+                this.ctx.fillStyle = '#F5F5F5';
+                this.ctx.beginPath();
+                this.ctx.arc(-10, -15, 7, 0, Math.PI * 2);
+                this.ctx.arc(10, -15, 7, 0, Math.PI * 2);
+                this.ctx.arc(-5, -20, 6, 0, Math.PI * 2);
+                this.ctx.arc(5, -20, 6, 0, Math.PI * 2);
+                this.ctx.arc(0, -18, 9, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Wig curls
+                this.ctx.fillStyle = '#E8E8E8';
+                this.ctx.beginPath();
+                this.ctx.arc(-8, -12, 3, 0, Math.PI * 2);
+                this.ctx.arc(8, -12, 3, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Eyes
+                this.ctx.fillStyle = '#000';
+                this.ctx.beginPath();
+                this.ctx.arc(-4, -8, 2, 0, Math.PI * 2);
+                this.ctx.arc(4, -8, 2, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Eyebrows
+                this.ctx.strokeStyle = '#8B4513';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.moveTo(-6, -10);
+                this.ctx.lineTo(-2, -11);
+                this.ctx.moveTo(2, -11);
+                this.ctx.lineTo(6, -10);
+                this.ctx.stroke();
+
+                // Nose
+                this.ctx.fillStyle = '#F4A460';
+                this.ctx.beginPath();
+                this.ctx.arc(0, -4, 1, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Coat buttons
+                this.ctx.fillStyle = '#FFD700';
+                this.ctx.beginPath();
+                this.ctx.arc(0, 5, 2, 0, Math.PI * 2);
+                this.ctx.arc(0, 10, 2, 0, Math.PI * 2);
+                this.ctx.arc(0, 15, 2, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                this.ctx.restore();
+            }
+
+            drawRocket() {
+                // Rocket body
+                this.ctx.fillStyle = '#C0C0C0';
+                this.ctx.fillRect(-8, -this.player.radius, 16, this.player.radius * 2);
+
+                // Rocket nose cone
+                this.ctx.fillStyle = '#FF0000';
+                this.ctx.beginPath();
+                this.ctx.moveTo(-8, -this.player.radius);
+                this.ctx.lineTo(0, -this.player.radius - 10);
+                this.ctx.lineTo(8, -this.player.radius);
+                this.ctx.closePath();
+                this.ctx.fill();
+
+                // Rocket fins
+                this.ctx.fillStyle = '#808080';
+                this.ctx.beginPath();
+                this.ctx.moveTo(-8, this.player.radius);
+                this.ctx.lineTo(-15, this.player.radius + 8);
+                this.ctx.lineTo(-8, this.player.radius + 5);
+                this.ctx.closePath();
+                this.ctx.fill();
+
+                this.ctx.beginPath();
+                this.ctx.moveTo(8, this.player.radius);
+                this.ctx.lineTo(15, this.player.radius + 8);
+                this.ctx.lineTo(8, this.player.radius + 5);
+                this.ctx.closePath();
+                this.ctx.fill();
+
+                // Rocket flames
+                if (this.transformationStage >= 2) {
+                    const flameHeight = 15 + Math.sin(Date.now() * 0.02) * 5;
+                    this.ctx.fillStyle = '#FF4500';
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(-6, this.player.radius + 5);
+                    this.ctx.lineTo(0, this.player.radius + flameHeight);
+                    this.ctx.lineTo(6, this.player.radius + 5);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+
+                    // Inner flame
+                    this.ctx.fillStyle = '#FFD700';
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(-3, this.player.radius + 5);
+                    this.ctx.lineTo(0, this.player.radius + flameHeight - 5);
+                    this.ctx.lineTo(3, this.player.radius + 5);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                }
+
+                // Window
+                this.ctx.fillStyle = '#87CEEB';
+                this.ctx.beginPath();
+                this.ctx.arc(0, -5, 4, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+
+            drawAtmosphere() {
+                // Floating particles
+                const time = Date.now() * 0.001;
+                for (let i = 0; i < 8; i++) {
+                    const x = (Math.sin(time * 0.5 + i) * 100) + this.width / 2;
+                    const y = (Math.cos(time * 0.3 + i) * 50) + 100 + i * 20;
+
+                    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, 3, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+
+            drawChargeField() {
+                // Show charge field when ready
+                if (this.chargeReady && this.chargeCooldown <= 0) {
+                    const pulse = Math.sin(Date.now() * 0.02) * 0.3 + 0.7;
+                    this.ctx.strokeStyle = `rgba(0, 255, 255, ${pulse})`;
+                    this.ctx.lineWidth = 3;
+                    this.ctx.setLineDash([5, 5]);
+                    this.ctx.beginPath();
+                    this.ctx.arc(this.player.x, this.player.y, 120, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                    this.ctx.setLineDash([]); // Reset line dash
+                }
+
+                // Show explosion effect during activation
+                if (this.chargeCooldown > this.maxChargeCooldown - 30) { // First 0.5 seconds
+                    const explosionTime = this.maxChargeCooldown - this.chargeCooldown;
+                    const explosionRadius = (explosionTime / 30) * 150;
+                    const alpha = 1 - (explosionTime / 30);
+
+                    // Multiple explosion rings
+                    for (let i = 0; i < 3; i++) {
+                        const ringRadius = Math.max(5, explosionRadius - i * 20); // Ensure radius is never negative
+                        if (ringRadius > 0) {
+                            this.ctx.strokeStyle = `rgba(255, 255, 0, ${alpha * (1 - i * 0.3)})`;
+                            this.ctx.lineWidth = Math.max(1, 8 - i * 2); // Ensure line width is positive
+                            this.ctx.beginPath();
+                            this.ctx.arc(this.player.x, this.player.y, ringRadius, 0, Math.PI * 2);
+                            this.ctx.stroke();
+                        }
+                    }
+
+                    // Lightning bolts
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2;
+                        const startX = this.player.x + Math.cos(angle) * 30;
+                        const startY = this.player.y + Math.sin(angle) * 30;
+                        const endX = this.player.x + Math.cos(angle) * explosionRadius;
+                        const endY = this.player.y + Math.sin(angle) * explosionRadius;
+
+                        this.ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+                        this.ctx.lineWidth = 3;
+                        this.ctx.beginPath();
+                        this.ctx.moveTo(startX, startY);
+                        this.ctx.lineTo(endX, endY);
+                        this.ctx.stroke();
+                    }
+                }
+            }
+
+            darkenColor(color) {
+                // Simple color darkening function
+                const colors = {
+                    '#FF6B6B': '#E55555',
+                    '#4ECDC4': '#3EADA4',
+                    '#45B7D1': '#3597B1',
+                    '#96CEB4': '#76AE94'
+                };
+                return colors[color] || color;
+            }
+
+            drawBuildings() {
+                const buildings = [
+                    { x: 50, y: 50, width: 120, height: 80, color: '#8B4513' },
+                    { x: 250, y: 80, width: 100, height: 70, color: '#CD853F' },
+                    { x: 500, y: 60, width: 140, height: 90, color: '#A0522D' }
+                ];
+
+                buildings.forEach(building => {
+                    // Building body
+                    this.ctx.fillStyle = building.color;
+                    this.ctx.fillRect(building.x, building.y, building.width, building.height);
+
+                    // Roof
+                    this.ctx.fillStyle = '#8B0000';
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(building.x - 10, building.y);
+                    this.ctx.lineTo(building.x + building.width / 2, building.y - 20);
+                    this.ctx.lineTo(building.x + building.width + 10, building.y);
+                    this.ctx.closePath();
+                    this.ctx.fill();
+
+                    // Door
+                    this.ctx.fillStyle = '#654321';
+                    this.ctx.fillRect(building.x + building.width / 2 - 8, building.y + building.height - 25, 16, 25);
+                });
+            }
+
+            gameLoop() {
+                this.update();
+                this.render();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+
+        // Start game when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new NewtonGame();
+        });
+    </script>
+</body>
+
+</html>
